@@ -28,10 +28,6 @@
  ****************************************************************
  */
 
-#include "config.h"
-
-#include "screen.h"
-
 #include <ctype.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -46,46 +42,67 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <limits.h>
-
 #include <locale.h>
+
 #if defined(HAVE_LANGINFO_H)
 #include <langinfo.h>
 #endif
 
-#include "logfile.h"		/* islogfile, logfflush, logfopen/logfclose */
-#include "fileio.h"
-#include "list_generic.h"
-#include "mark.h"
-#include "utmp.h"
-#include "winmsg.h"
+#include "include/config.h"
+#include "include/screen.h"
+#include "include/logfile.h" // islogfile, logfflush, logfopen/logfclose
+#include "include/fileio.h"
+#include "include/list_generic.h"
+#include "include/mark.h"
+#include "include/utmp.h"
+#include "include/winmsg.h"
 
-extern char **environ;
+// -------
+// do this last
+// -------
+#include "include/attacher.h"
+#include "include/encoding.h"
+#include "include/help.h"
+#include "include/misc.h"
+#include "include/process.h"
+#include "include/socket.h"
+#include "include/termcap.h"
+#include "include/tty.h"
+
+#if !defined(VERSION_MAJOR)
+#define VERSION_MAJOR 0 // stop warning on editor lsp, incoming from src/configure.ac
+#endif
+
+#if !defined(VERSION_MINOR)
+#define VERSION_MINOR 0 // stop warning on editor lsp, incoming from src/configure.ac
+#endif
+
+#if !defined(VERSION_REVISION)
+#define VERSION_REVISION 0 // stop warning on editor lsp, incoming from src/configure.ac
+#endif
+
+extern char** environ;
 
 int force_vt = 1;
 int VBellWait, MsgWait, MsgMinWait, SilenceWait;
-
 char *ShellProg;
 char *ShellArgs[2];
-
 struct backtick;
-
-static struct passwd *getpwbyname(char *, struct passwd *);
+static struct passwd* getpwbyname(char* name, struct passwd* ppp);
 static void SigChldHandler(void);
 static void SigChld(int);
 static void SigInt(int);
 static void CoreDump(int);
 static void FinitHandler(int);
 static void DoWait(void);
-static void serv_read_fn(Event *, void *);
-static void serv_select_fn(Event *, void *);
-static void logflush_fn(Event *, void *);
-static int IsSymbol(char *, char *);
-static char *ParseChar(char *, char *);
-static int ParseEscape(char *);
-static void SetTtyname(bool fatal, struct stat *st);
-
-int nversion;			/* numerical version, used for secondary DA */
-
+static void serv_read_fn(Event*, void*);
+static void serv_select_fn(Event*, void*);
+static void logflush_fn(Event*, void*);
+static int IsSymbol(char*, char*);
+static char* ParseChar(char*, char*);
+static int ParseEscape(char*);
+static void SetTtyname(bool fatal, struct stat* st);
+int nversion; // numerical version, used for secondary DA
 /* the attacher */
 struct passwd *ppp;
 char *attach_tty;
@@ -97,7 +114,6 @@ struct mode attach_Mode;
 bool attach_tty_is_in_new_ns = false;
 /* Content of the tty symlink when attach_tty_is_in_new_ns == true. */
 char attach_tty_name_in_ns[MAXPATHLEN];
-
 char SocketPath[MAXPATHLEN];
 char *SocketName;			/* SocketName is pointer in SocketPath */
 char *SocketMatch = NULL;		/* session id command line argument */
@@ -105,12 +121,9 @@ int ServerSocket = -1;
 Event serv_read;
 Event serv_select;
 Event logflushev;
-
 char **NewEnv = NULL;
-
 char *RcFileName = NULL;
 char *home;
-
 char *screenlogfile;		/* filename layout */
 int log_flush = 10;		/* flush interval in seconds */
 bool logtstamp_on = false;	/* tstamp disabled */
@@ -131,12 +144,10 @@ bool adaptflag, iflag, lsflag, quietflag, wipeflag, xflag;
 int rflag, dflag;
 int queryflag = -1;
 bool hastruecolor = false;
-
 char *multi;
 int multiattach;
 int tty_mode;
 int tty_oldmode = -1;
-
 char HostName[MAXSTR];
 pid_t MasterPid, PanicPid;
 uid_t real_uid, eff_uid;
@@ -146,11 +157,8 @@ gid_t real_gid, eff_gid;
 bool default_startup;
 int ZombieKey_destroy, ZombieKey_resurrect, ZombieKey_onerror;
 char *preselect = NULL;		/* only used in Attach() */
-
 char *screenencodings;
-
 bool cjkwidth;
-
 Layer *flayer;
 Window *fore;
 Window *mru_window;
@@ -162,75 +170,68 @@ Window *console_window;
 int af;
 #endif
 
-/*
- * Do this last
- */
-#include "attacher.h"
-#include "encoding.h"
-#include "help.h"
-#include "misc.h"
-#include "process.h"
-#include "socket.h"
-#include "termcap.h"
-#include "tty.h"
-
-char strnomem[] = "Out of memory.";
-
+char strnomem[] = "Out of memory";
 static int InterruptPlease;
 static int GotSigChld;
 
-/********************************************************************/
-/********************************************************************/
-/********************************************************************/
-
-static struct passwd *getpwbyname(char *name, struct passwd *ppp)
-{
+static struct passwd* 
+getpwbyname(char* name, struct passwd* ppp) {
 	int n;
 
 	if (!ppp && !(ppp = getpwnam(name)))
 		return NULL;
 
-	/* Do password sanity check..., allow ##user for SUN_C2 security */
+    // do password sanity check, allow ##user for SUN_C2 security
 	n = 0;
+
 	if (ppp->pw_passwd[0] == '#' && ppp->pw_passwd[1] == '#' && strcmp(ppp->pw_passwd + 2, ppp->pw_name) == 0)
 		n = 13;
+
 	for (; n < 13; n++) {
 		char c = ppp->pw_passwd[n];
-		if (!(c == '.' || c == '/' || c == '$' ||
-		      (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')))
+
+		if (!(c == '.' || c == '/' || c == '$' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')))
 			break;
 	}
 
 	if (n < 13)
 		ppp->pw_passwd = NULL;
+
+	// beware of linux's long passwords
 	if (ppp->pw_passwd && strlen(ppp->pw_passwd) == 13 + 11)
-		ppp->pw_passwd[13] = 0;	/* beware of linux's long passwords */
+		ppp->pw_passwd[13] = 0;
 
 	return ppp;
 }
 
-static char *locale_name(void)
-{
+static char*
+locale_name(void) {
 	static char *s;
 
 	s = getenv("LC_ALL");
+
 	if (s == NULL)
 		s = getenv("LC_CTYPE");
+
 	if (s == NULL)
 		s = getenv("LANG");
+
 	if (s == NULL)
 		s = "C";
+
 	return s;
 }
 
-static void exit_with_usage(char *myname, char *message, char *arg)
-{
-	printf("Use: %s [-opts] [cmd [args]]\n", myname);
-	printf(" or: %s -r [host.tty]\n\nOptions:\n", myname);
+static void 
+exit_with_usage(char* binname, char* message, char* arg) {
+	printf("Use: %s [-opts] [cmd [args]]\n", binname);
+	printf(" or: %s -r [host.tty]\n\nOptions:\n", binname);
+
 #ifdef ENABLE_TELNET
 	printf("-4            Resolve hostnames only to IPv4 addresses.\n");
 	printf("-6            Resolve hostnames only to IPv6 addresses.\n");
 #endif
+
 	printf("-a            Force all capabilities into each window's termcap.\n");
 	printf("-A -[r|R]     Adapt all windows to the new display width & height.\n");
 	printf("-c file       Read configuration file instead of '.screenrc'.\n");
@@ -242,9 +243,11 @@ static void exit_with_usage(char *myname, char *message, char *arg)
 	printf("-f            Flow control on, -fn = off, -fa = auto.\n");
 	printf("-h lines      Set the size of the scrollback history buffer.\n");
 	printf("-i            Interrupt output sooner when flow control is on.\n");
+
 #if defined(ENABLE_UTMP)
 	printf("-l            Login mode on (update %s), -ln = off.\n", UTMPXFILE);
 #endif
+
 	printf("-ls [match]   or\n");
 	printf("-list         Do nothing, just list our SocketDir [on possible matches].\n");
 	printf("-L            Turn on output logging.\n");
@@ -265,16 +268,18 @@ static void exit_with_usage(char *myname, char *message, char *arg)
 	printf("-wipe [match] Do nothing, just clean up SocketDir [on possible matches].\n");
 	printf("-x            Attach to a not detached screen. (Multi display mode).\n");
 	printf("-X            Execute <cmd> as a screen command in the specified session.\n");
+
 	if (message && *message) {
 		printf("\nError: ");
 		printf(message, arg);
 		printf("\n");
 	}
+
 	exit(1);
 }
 
-int main(int argc, char **argv)
-{
+int 
+main(int argc, char** argv) {
 	int n;
 	char *ap;
 	char *av0;
@@ -284,18 +289,16 @@ int main(int argc, char **argv)
 	char *SocketDir;
 	struct stat st;
 	mode_t oumask;
-	struct NewWindow nwin;
-	bool detached = false;	/* start up detached */
+	new_window_t nwin;
+	bool detached = false; // start up detached
 	char *sockp;
 	char *sty = NULL;
 	char *multi_home = NULL;
 	bool cmdflag = 0;
 
-	/*
-	 *  First, close all unused descriptors
-	 *  (otherwise, we might have problems with the select() call)
-	 */
+	// first, close all unused descriptors (otherwise, we might have problems with the select() call)
 	closeallfiles(0);
+
 	snprintf(version, 59, "%d.%d.%d (build on %s) ", VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION, BUILD_DATE);
 	nversion = VERSION_MAJOR * 10000 + VERSION_MINOR * 100 + VERSION_REVISION;
 
@@ -328,6 +331,7 @@ int main(int argc, char **argv)
 	nwin_options = nwin_undef;
 	strncpy(screenterm, "screen", MAXTERMLEN);
 	screenterm[MAXTERMLEN] = '\0';
+
 #ifdef ENABLE_TELNET
 	af = AF_UNSPEC;
 #endif
@@ -347,236 +351,249 @@ int main(int argc, char **argv)
 
 	while (argc > 0) {
 		ap = *++argv;
+
 		if (--argc > 0 && *ap == '-') {
 			if (ap[1] == '-' && ap[2] == 0) {
 				argv++;
 				argc--;
 				break;
 			}
+
 			if (ap[1] == '-' && !strncmp(ap, "--version", 9)) {
 				printf("Screen version %s\n", version);
 				exit(0);
 			}
+
 			if (ap[1] == '-' && !strncmp(ap, "--help", 6))
 				exit_with_usage(myname, NULL, NULL);
+
 			while (ap && *ap && *++ap) {
 				switch (*ap) {
 #ifdef ENABLE_TELNET
-				case '4':
-					af = AF_INET;
-					break;
-				case '6':
-					af = AF_INET6;
-					break;
+                    case '4':
+                        af = AF_INET;
+                        break;
+                    case '6':
+                        af = AF_INET6;
+                        break;
 #endif
-				case 'a':
-					nwin_options.aflag = true;
-					break;
-				case 'A':
-					adaptflag = true;
-					break;
-				case 'p':	/* preselect */
-					if (*++ap)
-						preselect = ap;
-					else {
-						if (!--argc)
-							exit_with_usage(myname, "Specify a window to preselect with -p",
-									NULL);
-						preselect = *++argv;
-					}
-					ap = NULL;
-					break;
-				case 'c':
-					if (*++ap)
-						RcFileName = ap;
-					else {
-						if (--argc == 0)
-							exit_with_usage(myname,
-									"Specify an alternate rc-filename with -c",
-									NULL);
-						RcFileName = *++argv;
-					}
-					ap = NULL;
-					break;
-				case 'e':
-					if (!*++ap) {
-						if (--argc == 0)
-							exit_with_usage(myname, "Specify command characters with -e",
-									NULL);
-						ap = *++argv;
-					}
-					if (ParseEscape(ap))
-						Panic(0, "Two characters are required with -e option, not '%s'.", ap);
-					ap = NULL;
-					break;
-				case 'f':
-					ap++;
-					switch (*ap++) {
-					case 'n':
-					case '0':
-						nwin_options.flowflag = FLOW_ON;
-						break;
-					case '\0':
-						ap--;
-						/* FALLTHROUGH */
-					case 'y':
-					case '1':
-						nwin_options.flowflag = FLOW_OFF;
-						break;
-					case 'a':
-						nwin_options.flowflag = FLOW_AUTOFLAG;
-						break;
-					default:
-						exit_with_usage(myname, "Unknown flow option -%s", --ap);
-					}
-					break;
-				case 'h':
-					if (--argc == 0)
-						exit_with_usage(myname, NULL, NULL);
-					nwin_options.histheight = atoi(*++argv);
-					if (nwin_options.histheight < 0)
-						exit_with_usage(myname, "-h: %s: negative scrollback size?", *argv);
-					break;
-				case 'i':
-					iflag = true;
-					break;
-				case 't':	/* title, the former AkA == -k */
-					if (--argc == 0)
-						exit_with_usage(myname, "Specify a new window-name with -t", NULL);
-					nwin_options.aka = *++argv;
-					break;
-				case 'l':
-					ap++;
-					switch (*ap++) {
-					case 'n':
-					case '0':
-						nwin_options.lflag = 0;
-						break;
-					case '\0':
-						ap--;
-						/* FALLTHROUGH */
-					case 'y':
-					case '1':
-						nwin_options.lflag = 1;
-						break;
-					case 'a':
-						nwin_options.lflag = 3;
-						break;
-					case 's':	/* -ls */
-					case 'i':	/* -list */
-						lsflag = true;
-						if (argc > 1 && !SocketMatch) {
-							SocketMatch = *++argv;
-							argc--;
-						}
-						ap = NULL;
-						break;
-					default:
-						exit_with_usage(myname, "%s: Unknown suboption to -l", --ap);
-					}
-					break;
-				case 'w':
-					if (strcmp(ap + 1, "ipe"))
-						exit_with_usage(myname, "Unknown option %s", --ap);
-					lsflag = true;
-					wipeflag = true;
-					if (argc > 1 && !SocketMatch) {
-						SocketMatch = *++argv;
-						argc--;
-					}
-					break;
-				case 'L':
-					if (!strcmp(ap + 1, "ogfile")) {
-						if (--argc == 0)
-							exit_with_usage(myname, "Specify logfile path with -Logfile", NULL);
+                    case 'a':
+                        nwin_options.aflag = true;
+                        break;
+                    case 'A':
+                        adaptflag = true;
+                        break;
+                    case 'p': // preselect
+                        if (*++ap)
+                            preselect = ap;
+                        else {
+                            if (!--argc)
+                                exit_with_usage(myname, "Specify a window to preselect with -p", NULL);
 
-						if (strlen(*++argv) > PATH_MAX)
-							Panic(1, "-Logfile name too long. (max. %d char)", PATH_MAX);
+                            preselect = *++argv;
+                        }
 
-						free(screenlogfile); /* we already set it up while starting */
-						screenlogfile = SaveStr(*argv);
+                        ap = NULL;
+                        break;
+                    case 'c':
+                        if (*++ap)
+                            RcFileName = ap;
+                        else {
+                            if (--argc == 0)
+                                exit_with_usage(myname, "Specify an alternate rc-filename with -c", NULL);
 
-						ap = NULL;
-					} else if (!strcmp(ap, "L"))
-						nwin_options.Lflag = 1;
+                            RcFileName = *++argv;
+                        }
 
-					break;
-				case 'm':
-					mflag = 1;
-					break;
-				case 'O':	/* to be (or not to be?) deleted. jw. */
-					force_vt = 0;
-					break;
-				case 'T':
-					if (--argc == 0)
-						exit_with_usage(myname, "Specify terminal-type with -T", NULL);
-					if (strlen(*++argv) < MAXTERMLEN) {
-						strncpy(screenterm, *argv, MAXTERMLEN);
-						screenterm[MAXTERMLEN] = '\0';
-					} else
-						Panic(0, "-T: terminal name too long. (max. %d char)", MAXTERMLEN);
-					nwin_options.term = screenterm;
-					break;
-				case 'q':
-					quietflag = true;
-					break;
-				case 'Q':
-					queryflag = 1;
-					cmdflag = true;
-					break;
-				case 'r':
-				case 'R':
-				case 'x':
-					if (argc > 1 && *argv[1] != '-' && !SocketMatch) {
-						SocketMatch = *++argv;
-						argc--;
-					}
-					if (*ap == 'x')
-						xflag = true;
-					if (rflag)
-						rflag = 2;
-					rflag += (*ap == 'R') ? 2 : 1;
-					break;
-				case 'd':
-					dflag = 1;
-					/* FALLTHROUGH */
-				case 'D':
-					if (!dflag)
-						dflag = 2;
-					if (argc == 2) {
-						if (*argv[1] != '-' && !SocketMatch) {
-							SocketMatch = *++argv;
-							argc--;
-						}
-					}
-					break;
-				case 's':
-					if (--argc == 0)
-						exit_with_usage(myname, "Specify shell with -s", NULL);
-					if (ShellProg)
-						free(ShellProg);
-					ShellProg = SaveStr(*++argv);
-					break;
-				case 'S':
-					if (!SocketMatch) {
-						if (--argc == 0)
-							exit_with_usage(myname, "Specify session-name with -S", NULL);
-						SocketMatch = *++argv;
-					}
-					if (!*SocketMatch)
-						exit_with_usage(myname, "Empty session-name?", NULL);
-					break;
-				case 'X':
-					cmdflag = true;
-					break;
-				case 'v':
-					printf("Screen version %s\n", version);
-					exit(0);
-				case 'U':
-					nwin_options.encoding = nwin_options.encoding == -1 ? UTF8 : 0;
-					break;
-				default:
-					exit_with_usage(myname, "Unknown option %s", --ap);
+                        ap = NULL;
+                        break;
+                    case 'e':
+                        if (!*++ap) {
+                            if (--argc == 0)
+                                exit_with_usage(myname, "Specify command characters with -e", NULL);
+
+                            ap = *++argv;
+                        }
+
+                        if (ParseEscape(ap))
+                            Panic(0, "Two characters are required with -e option, not '%s'.", ap);
+
+                        ap = NULL;
+                        break;
+                    case 'f':
+                        ap++;
+
+                        switch (*ap++) {
+                            case 'n':
+                            case '0':
+                                nwin_options.flowflag = FLOW_ON;
+                                break;
+                            case '\0':
+                                ap--;
+                                __attribute__((fallthrough));
+                            case 'y':
+                            case '1':
+                                nwin_options.flowflag = FLOW_OFF;
+                                break;
+                            case 'a':
+                                nwin_options.flowflag = FLOW_AUTOFLAG;
+                                break;
+                            default:
+                                exit_with_usage(myname, "Unknown flow option -%s", --ap);
+                                break;
+                        }
+
+                        break;
+                    case 'h':
+                        if (--argc == 0)
+                            exit_with_usage(myname, NULL, NULL);
+
+                        nwin_options.histheight = atoi(*++argv);
+
+                        if (nwin_options.histheight < 0)
+                            exit_with_usage(myname, "-h: %s: negative scrollback size?", *argv);
+                        break;
+                    case 'i':
+                        iflag = true;
+                        break;
+                    case 't':	/* title, the former AkA == -k */
+                        if (--argc == 0)
+                            exit_with_usage(myname, "Specify a new window-name with -t", NULL);
+
+                        nwin_options.aka = *++argv;
+                        break;
+                    case 'l':
+                        ap++;
+                        switch (*ap++) {
+                        case 'n':
+                        case '0':
+                            nwin_options.lflag = 0;
+                            break;
+                        case '\0':
+                            ap--;
+                            __attribute__((fallthrough));
+                        case 'y':
+                        case '1':
+                            nwin_options.lflag = 1;
+                            break;
+                        case 'a':
+                            nwin_options.lflag = 3;
+                            break;
+                        case 's':	/* -ls */
+                        case 'i':	/* -list */
+                            lsflag = true;
+                            if (argc > 1 && !SocketMatch) {
+                                SocketMatch = *++argv;
+                                argc--;
+                            }
+                            ap = NULL;
+                            break;
+                        default:
+                            exit_with_usage(myname, "%s: Unknown suboption to -l", --ap);
+                        }
+                        break;
+                    case 'w':
+                        if (strcmp(ap + 1, "ipe"))
+                            exit_with_usage(myname, "Unknown option %s", --ap);
+                        lsflag = true;
+                        wipeflag = true;
+                        if (argc > 1 && !SocketMatch) {
+                            SocketMatch = *++argv;
+                            argc--;
+                        }
+                        break;
+                    case 'L':
+                        if (!strcmp(ap + 1, "ogfile")) {
+                            if (--argc == 0)
+                                exit_with_usage(myname, "Specify logfile path with -Logfile", NULL);
+
+                            if (strlen(*++argv) > PATH_MAX)
+                                Panic(1, "-Logfile name too long. (max. %d char)", PATH_MAX);
+
+                            free(screenlogfile); /* we already set it up while starting */
+                            screenlogfile = SaveStr(*argv);
+
+                            ap = NULL;
+                        } else if (!strcmp(ap, "L"))
+                            nwin_options.Lflag = 1;
+
+                        break;
+                    case 'm':
+                        mflag = 1;
+                        break;
+                    case 'O':	/* to be (or not to be?) deleted. jw. */
+                        force_vt = 0;
+                        break;
+                    case 'T':
+                        if (--argc == 0)
+                            exit_with_usage(myname, "Specify terminal-type with -T", NULL);
+                        if (strlen(*++argv) < MAXTERMLEN) {
+                            strncpy(screenterm, *argv, MAXTERMLEN);
+                            screenterm[MAXTERMLEN] = '\0';
+                        } else
+                            Panic(0, "-T: terminal name too long. (max. %d char)", MAXTERMLEN);
+                        nwin_options.term = screenterm;
+                        break;
+                    case 'q':
+                        quietflag = true;
+                        break;
+                    case 'Q':
+                        queryflag = 1;
+                        cmdflag = true;
+                        break;
+                    case 'r':
+                    case 'R':
+                    case 'x':
+                        if (argc > 1 && *argv[1] != '-' && !SocketMatch) {
+                            SocketMatch = *++argv;
+                            argc--;
+                        }
+                        if (*ap == 'x')
+                            xflag = true;
+                        if (rflag)
+                            rflag = 2;
+                        rflag += (*ap == 'R') ? 2 : 1;
+                        break;
+                    case 'd':
+                        dflag = 1;
+                        /* FALLTHROUGH */
+                    case 'D':
+                        if (!dflag)
+                            dflag = 2;
+                        if (argc == 2) {
+                            if (*argv[1] != '-' && !SocketMatch) {
+                                SocketMatch = *++argv;
+                                argc--;
+                            }
+                        }
+                        break;
+                    case 's':
+                        if (--argc == 0)
+                            exit_with_usage(myname, "Specify shell with -s", NULL);
+                        if (ShellProg)
+                            free(ShellProg);
+                        ShellProg = SaveStr(*++argv);
+                        break;
+                    case 'S':
+                        if (!SocketMatch) {
+                            if (--argc == 0)
+                                exit_with_usage(myname, "Specify session-name with -S", NULL);
+                            SocketMatch = *++argv;
+                        }
+                        if (!*SocketMatch)
+                            exit_with_usage(myname, "Empty session-name?", NULL);
+                        break;
+                    case 'X':
+                        cmdflag = true;
+                        break;
+                    case 'v':
+                        printf("Screen version %s\n", version);
+                        exit(0);
+                    case 'U':
+                        nwin_options.encoding = nwin_options.encoding == -1 ? UTF8 : 0;
+                        break;
+                    default:
+                        exit_with_usage(myname, "Unknown option %s", --ap);
 				}
 			}
 		} else
@@ -1785,33 +1802,43 @@ static void serv_select_fn(Event *event, void *data)
 	}
 }
 
-static void logflush_fn(Event *event, void *data)
-{
+static void 
+logflush_fn(Event* ev, void* data) {
 	Window *p;
 	char *buf;
 	int n;
 
-	(void)data; /* unused */
+	UNUSED(data);
 
+    // no more logfiles
 	if (!islogfile(NULL))
-		return;		/* no more logfiles */
+		return;
+
 	logfflush(NULL);
+
 	n = log_flush ? log_flush : (logtstamp_after + 4) / 5;
+
 	if (n) {
-		SetTimeout(event, n * 1000);
-		evenq(event);	/* re-enqueue ourself */
+		SetTimeout(ev, n * 1000);
+		evenq(event);	// re-enqueue ourself
 	}
+
 	if (!logtstamp_on)
 		return;
-	/* write fancy time-stamp */
+
+    // write fancy timestamp
 	for (p = mru_window; p; p = p->w_prev_mru) {
 		if (!p->w_log)
 			continue;
+
 		p->w_logsilence += n;
+
 		if (p->w_logsilence < logtstamp_after)
 			continue;
+
 		if (p->w_logsilence - n >= logtstamp_after)
 			continue;
+
 		buf = MakeWinMsg(logtstamp_string, p, '%');
 		logfwrite(p->w_log, buf, strlen(buf));
 	}
@@ -1824,10 +1851,11 @@ static void logflush_fn(Event *event, void *data)
  * The result is placed in *cp, p is advanced behind the parsed expression and
  * returned.
  */
-static char *ParseChar(char *p, char *cp)
-{
+static char* 
+ParseChar(char* p, char* cp) {
 	if (*p == 0)
 		return NULL;
+
 	if (*p == '^' && p[1]) {
 		if (*++p == '?')
 			*cp = '\177';
@@ -1835,19 +1863,22 @@ static char *ParseChar(char *p, char *cp)
 			*cp = Ctrl(*p);
 		else
 			return NULL;
+
 		++p;
 	} else if (*p == '\\' && *++p <= '7' && *p >= '0') {
 		*cp = 0;
+
 		do
 			*cp = *cp * 8 + *p - '0';
 		while (*++p <= '7' && *p >= '0');
 	} else
 		*cp = *p++;
+
 	return p;
 }
 
-static int ParseEscape(char *p)
-{
+static int 
+ParseEscape(char* p) {
 	unsigned char buf[2];
 
 	if (*p == 0)
@@ -1855,13 +1886,15 @@ static int ParseEscape(char *p)
 	else {
 		if ((p = ParseChar(p, (char *)buf)) == NULL || (p = ParseChar(p, (char *)buf + 1)) == NULL || *p)
 			return -1;
+
 		SetEscape(NULL, buf[0], buf[1]);
 	}
+
 	return 0;
 }
 
-static void SetTtyname(bool fatal, struct stat *st)
-{
+static void 
+SetTtyname(bool fatal, struct stat* st) {
 	int ret;
 	int saved_errno = 0;
 
@@ -1870,19 +1903,20 @@ static void SetTtyname(bool fatal, struct stat *st)
 
 	errno = 0;
 	attach_tty = ttyname(0);
+
 	if (!attach_tty) {
 		if (errno == ENODEV) {
 			saved_errno = errno;
 			attach_tty = "/proc/self/fd/0";
 			attach_tty_is_in_new_ns = true;
 			ret = readlink(attach_tty, attach_tty_name_in_ns, ARRAY_SIZE(attach_tty_name_in_ns));
+
 			if (ret < 0 || (size_t)ret >= ARRAY_SIZE(attach_tty_name_in_ns))
 				Panic(0, "Bad tty '%s'", attach_tty);
-		} else if (fatal) {
-			Panic(0, "Must be connected to a terminal.");
-		} else {
+		} else if (fatal)
+			Panic(0, "Must be connected to a terminal");
+		else
 			attach_tty = "";
-		}
 	}
 
 	if (attach_tty && strcmp(attach_tty, "")) {
@@ -1892,10 +1926,16 @@ static void SetTtyname(bool fatal, struct stat *st)
 		if (strlen(attach_tty) >= MAXPATHLEN)
 			Panic(0, "TtyName too long - sorry.");
 
-		/* Only call CheckTtyname() if the device does not exist in
-		 * another namespace.
-		 */
+		// only call CheckTtyname() if the device does not exist in another namespace.
 		if (saved_errno != ENODEV && CheckTtyname(attach_tty))
 			Panic(0, "Bad tty '%s'", attach_tty);
 	}
+}
+
+void 
+scr_kill(pid_t pid, int sig) {
+    if (pid < 2)
+        return;
+
+    (void) kill(pid, sig);
 }

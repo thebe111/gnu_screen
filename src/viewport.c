@@ -26,51 +26,57 @@
  ****************************************************************
  */
 
-#include "viewport.h"
+#include "include/viewport.h"
+#include "include/screen.h"
 
-#include "screen.h"
+int 
+rethink_display_viewports(void) {
+	viewport_t *viewport, *vp_next;
 
-int RethinkDisplayViewports(void) {
-	Viewport *viewport, *viewport_next;
-
-	/* free old viewports */
-	for (Canvas *canvas = display->d_cvlist; canvas; canvas = canvas->c_next) {
-		for (viewport = canvas->c_vplist; viewport; viewport = viewport_next) {
-			viewport_next = viewport->v_next;
-			memset((char *)viewport, 0, sizeof(Viewport));
+    // free old viewports
+	for (canvas_t* canvas = display->d_cvlist; canvas; canvas = canvas->c_next) {
+		for (viewport = canvas->c_vplist; viewport; viewport = vp_next) {
+			vp_next = viewport->v_next;
+			memset((char*) viewport, 0, sizeof(viewport_t));
 			free(viewport);
 		}
+
 		canvas->c_vplist = NULL;
 	}
+
 	display->d_vpxmin = -1;
 	display->d_vpxmax = -1;
 
-	for (Canvas *canvas = display->d_cvlist; canvas; canvas = canvas->c_next) {
-		if ((viewport = malloc(sizeof(Viewport))) == NULL) {
+	for (canvas_t* canvas = display->d_cvlist; canvas; canvas = canvas->c_next) {
+		if ((viewport = malloc(sizeof(viewport_t))) == NULL)
 			return -1;
-		}
-		viewport->v_canvas = canvas;
-		viewport->v_xs = canvas->c_xs;
-		viewport->v_ys = canvas->c_ys;
-		viewport->v_xe = canvas->c_xe;
-		viewport->v_ye = canvas->c_ye;
-		viewport->v_xoff = canvas->c_xoff;
-		viewport->v_yoff = canvas->c_yoff;
-		viewport->v_next = canvas->c_vplist;
+
+        *viewport = (viewport_t) {
+            .v_canvas = canvas,
+            .v_xs = canvas->c_xs,
+            .v_ys = canvas->c_ys,
+            .v_xe = canvas->c_xe,
+            .v_ye = canvas->c_ye,
+            .v_xoff = canvas->c_xoff,
+            .v_yoff = canvas->c_yoff,
+            .v_next = canvas->c_vplist,
+        };
+
 		canvas->c_vplist = viewport;
 
-		if (canvas->c_xs < display->d_vpxmin || display->d_vpxmin == -1) {
+		if (canvas->c_xs < display->d_vpxmin || display->d_vpxmin == -1)
 			display->d_vpxmin = canvas->c_xs;
-		}
-		if (canvas->c_xe > display->d_vpxmax || display->d_vpxmax == -1) {
+
+		if (canvas->c_xe > display->d_vpxmax || display->d_vpxmax == -1)
 			display->d_vpxmax = canvas->c_xe;
-		}
 	}
+
 	return 0;
 }
 
-void RethinkViewportOffsets(Canvas *canvas) {
-	for (Viewport *viewport = canvas->c_vplist; viewport; viewport = viewport->v_next) {
+void 
+rethink_viewport_offsets(canvas_t* canvas) {
+	for (viewport_t* viewport = canvas->c_vplist; viewport; viewport = viewport->v_next) {
 		viewport->v_xoff = canvas->c_xoff;
 		viewport->v_yoff = canvas->c_yoff;
 	}

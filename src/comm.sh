@@ -13,8 +13,8 @@ fi
 LC_ALL=C
 export LC_ALL
 
-rm -f comm.h
-cat << EOF > comm.h
+rm -f include/comm.h
+cat << EOF > include/comm.h
 /*
  * This file is automagically created from comm.c -- DO NOT EDIT
  */

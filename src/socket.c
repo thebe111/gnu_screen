@@ -366,7 +366,7 @@ int MakeServerSocket(void)
 			 */
 			eexit(11);
 		}
-		Msg(0, "There is already a screen running on %s.", Filename(SocketPath));
+		Msg(0, "There is already a screen running on %s.", scr_filename(SocketPath));
 		if (stat(SocketPath, &st) == -1)
 			Panic(errno, "stat");
 #ifdef SOCKET_DIR	/* if SOCKET_DIR is not defined, the socket is in $HOME.

@@ -20,108 +20,107 @@
  ****************************************************************
  */
 
-#include "config.h"
-
-#include "winmsgcond.h"
-
 #include <assert.h>
 #include <stdlib.h>
+#include "include/config.h"
+#include "include/winmsgcond.h"
 
-
-/* Initialize new condition and set to false; can be used to re-initialize a
- * condition for re-use */
-void wmc_init(WinMsgCond *cond, int offset)
-{
-	cond->locked = false;
-	cond->offset = offset;
-	cond->initialized = true;
-	wmc_clear(cond);
+// determine if condition is active (has been initialized and can be used)
+bool 
+wmc_is_active(const winmsg_cond_t* cond) {
+    return cond->initialized;
 }
 
-/* Mark condition as true */
-void wmc_set(WinMsgCond *cond)
-{
-	if (cond->locked)
-		return;
-
-	cond->state = true;
+// determine if a condition is true; the result is undefined if !wmc_active(cond) 
+bool 
+wmc_is_set(const winmsg_cond_t* cond) {
+    return cond->state;
 }
 
-/* Clear condition (equivalent to non-match) */
-void wmc_clear(WinMsgCond *cond)
-{
-	if (cond->locked)
-		return;
+// "else" encounted
+int 
+wmc_else(winmsg_cond_t* cond, int offset, bool* changed) {
+    assert(wmc_is_active(cond));
 
-	cond->state = false;
+    // if we're already set, then there is no point in processing the "else";
+    // we will therefore consider the previous condition to have succeeded, so
+    // now keep track of the start of the else so that it may be clobbered
+    // instead of the beginning of the true condition - that is, we're accepting
+    // the destination string up until this point 
+    if (wmc_is_set(cond)) {
+        wmc_init(cond, offset);     // track this as a new condition
+        cond->locked = true;        // "else" shall never succeed at this point
+
+        // we want to keep the string we have so far (the truth string)
+        if (changed)
+            *changed = false;
+
+        return offset;
+    }
+
+    // now that we have reached "else" and are not true, we can never be true;
+    // discard the truth part of the string
+    int prev_off = cond->offset;
+    cond->offset = offset;
+
+    // the "else" part must always be true at this point, because the previous
+    // condition failed
+    wmc_set(cond);
+    cond->locked = true;
+
+    if (changed)
+        *changed = true;
+
+    return prev_off;
 }
 
-/* Determine if condition is active (has been initialized and can be used) */
-bool wmc_is_active(const WinMsgCond *cond)
-{
-	return cond->initialized;
+// end condition and determine if string should be reset or kept - if our value
+// is truthful, then accept the string, otherwise reject and reset to the
+// position that we were initialized with
+int 
+wmc_end(const winmsg_cond_t* cond, int offset, bool* changed) {
+    bool set = wmc_is_set(cond);
+
+    if (changed)
+        *changed = !set;
+
+    return set ? offset : cond->offset;
 }
 
-/* Determine if a condition is true; the result is undefined if
- * !wmc_active(cond) */
-bool wmc_is_set(const WinMsgCond *cond)
-{
-	return cond->state;
+// clear condition (equivalent to non-match)
+void 
+wmc_clear(winmsg_cond_t* cond) {
+    if (cond->locked)
+        return;
+
+    cond->state = false;
 }
 
-/* "else" encounted */
-int wmc_else(WinMsgCond *cond, int offset, bool *changed)
-{
-	assert(wmc_is_active(cond));
-
-	/* if we're already set, then there is no point in processing the "else";
-	 * we will therefore consider the previous condition to have succeeded, so
-	 * now keep track of the start of the else so that it may be clobbered
-	 * instead of the beginning of the true condition---that is, we're accepting
-	 * the destination string up until this point */
-	if (wmc_is_set(cond)) {
-		wmc_init(cond, offset);  /* track this as a new condition */
-		cond->locked = true;  /* "else" shall never succeed at this point */
-
-		/* we want to keep the string we have so far (the truth string) */
-		if (changed)
-			*changed = false;
-		return offset;
-	}
-
-	/* now that we have reached "else" and are not true, we can never be true;
-	 * discard the truth part of the string */
-	int prevoffset = cond->offset;
-	cond->offset = offset;
-
-	/* the "else" part must always be true at this point, because the previous
-	 * condition failed */
-	wmc_set(cond);
-	cond->locked = true;
-
-	if (changed)
-		*changed = true;
-	return prevoffset;
+// deactivate a condition, preventing its use; this allows a single allocation
+// to be re-used and ignored until activated
+void 
+wmc_deinit(winmsg_cond_t* cond) {
+    cond->state = false;
+    cond->offset = 0;
+    cond->locked = true;
+    cond->initialized = false;
 }
 
-/* End condition and determine if string should be reset or kept---if our value
- * is truthful, then accept the string, otherwise reject and reset to the
- * position that we were initialized with */
-int wmc_end(const WinMsgCond *cond, int offset, bool *changed)
-{
-	bool set = wmc_is_set(cond);
-	if (changed)
-		*changed = !set;
-
-	return (set) ? offset : cond->offset;
+// initialize new condition and set to false; can be used to re-initialize a
+// condition for re-use
+void 
+wmc_init(winmsg_cond_t* cond, int offset) {
+    cond->locked = false;
+    cond->offset = offset;
+    cond->initialized = true;
+    wmc_clear(cond);
 }
 
-/* Deactivate a condition, preventing its use; this allows a single allocation
- * to be re-used and ignored until activated */
-void wmc_deinit(WinMsgCond *cond)
-{
-	cond->state = false;
-	cond->offset = 0;
-	cond->locked = true;
-	cond->initialized = false;
+// mark condition as true
+void 
+wmc_set(winmsg_cond_t* cond) {
+    if (cond->locked)
+        return;
+
+    cond->state = true;
 }

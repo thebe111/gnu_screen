@@ -26,15 +26,11 @@
  ****************************************************************
  */
 
-#include "config.h"
-
-#include "layout.h"
-
 #include <stdbool.h>
 #include <stdint.h>
-
+#include "config.h"
+#include "layout.h"
 #include "screen.h"
-
 #include "fileio.h"
 #include "misc.h"
 #include "process.h"

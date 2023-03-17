@@ -6578,7 +6578,7 @@ void DoScreen(char *fn, char **av)
 	if (av && *av) {
 		nwin.args = av;
 		if (!nwin.aka)
-			nwin.aka = Filename(*av);
+			nwin.aka = scr_filename(*av);
 	}
 	MakeWindow(&nwin);
 }

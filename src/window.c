@@ -29,10 +29,6 @@
  ****************************************************************
  */
 
-#include "config.h"
-
-#include "window.h"
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <signal.h>
@@ -41,51 +37,52 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include "include/config.h"
+#include "include/window.h"
+#include "include/fileio.h"
+#include "include/help.h"
+#include "include/input.h"
+#include "include/mark.h"
+#include "include/misc.h"
+#include "include/process.h"
+#include "include/pty.h"
+#include "include/resize.h"
+#include "include/telnet.h"
+#include "include/termcap.h"
+#include "include/tty.h"
+#include "include/utmp.h"
+#include "include/winmsg.h"
 
-#include "fileio.h"
-#include "help.h"
-#include "input.h"
-#include "mark.h"
-#include "misc.h"
-#include "process.h"
-#include "pty.h"
-#include "resize.h"
-#include "telnet.h"
-#include "termcap.h"
-#include "tty.h"
-#include "utmp.h"
-#include "winmsg.h"
-
-static void WinProcess(char **, size_t *);
-static void WinRedisplayLine(int, int, int, int);
-static void WinClearLine(int, int, int, int);
+static int DoAutolf(char*, size_t*, int);
+static int ForkWindow(Window* win, char**, char*);
 static int WinResize(int, int);
+static int muchpending(Window* win, Event*);
+static int zmodem_parse(Window* win, char*, size_t);
+static void WinClearLine(int, int, int, int);
+static void WinProcess(char**, size_t*);
+static void WinRedisplayLine(int, int, int, int);
 static void WinRestore(void);
-static int DoAutolf(char *, size_t *, int);
-static void ZombieProcess(char **, size_t *);
-static void win_readev_fn(Event *, void *);
-static void win_writeev_fn(Event *, void *);
-static void win_resurrect_zombie_fn(Event *, void *);
-static int muchpending(Window *, Event *);
-static void paste_slowev_fn(Event *, void *);
-static void pseu_readev_fn(Event *, void *);
-static void pseu_writeev_fn(Event *, void *);
-static void win_silenceev_fn(Event *, void *);
-static void win_destroyev_fn(Event *, void *);
+static void ZombieProcess(char**, size_t*);
+static void paste_slowev_fn(Event*, void*);
+static void pseu_readev_fn(Event*, void*);
+static void pseu_writeev_fn(Event*, void*);
+static void win_destroyev_fn(Event*, void*);
+static void win_readev_fn(Event*, void*);
+static void win_resurrect_zombie_fn(Event*, void*);
+static void win_silenceev_fn(Event*, void*);
+static void win_writeev_fn(Event*, void*);
+static void zmodemFin(char*, size_t, void*);
+static void zmodem_found(Window* win, int, char*, size_t);
 
-static int ForkWindow(Window *, char **, char *);
-static void zmodem_found(Window *, int, char *, size_t);
-static void zmodemFin(char *, size_t, void *);
-static int zmodem_parse(Window *, char *, size_t);
-
-bool VerboseCreate = false;		/* XXX move this to user.h */
+bool VerboseCreate = false; // FIXME: move this to user.h
 
 char DefaultShell[] = "/bin/sh";
+
 #ifndef HAVE_EXECVPE
 static char DefaultPath[] = ":/usr/ucb:/bin:/usr/bin";
 #endif
 
-struct NewWindow nwin_undef = {
+struct new_window_t nwin_undef = {
 	.StartAt             = -1,
 	.aka                 = NULL,
 	.args                = NULL,
@@ -113,7 +110,7 @@ struct NewWindow nwin_undef = {
 	.poll_zombie_timeout = 0
 };
 
-struct NewWindow nwin_default = {
+struct new_window_t nwin_default = {
 	.StartAt    = 0,
 	.aka        = NULL,
 	.args       = ShellArgs,
@@ -140,12 +137,12 @@ struct NewWindow nwin_default = {
 	.charset    = NULL
 };
 
-struct NewWindow nwin_options;
+new_window_t nwin_options;
 
 static int const_IOSIZE = IOSIZE;
 static int const_one = 1;
 
-void nwin_compose(struct NewWindow *def, struct NewWindow *new, struct NewWindow *res)
+void nwin_compose(new_window_t *def, new_window_t *new, new_window_t *res)
 {
 #define COMPOSE(x) res->x = new->x != nwin_undef.x ? new->x : def->x
 	COMPOSE(StartAt);
@@ -477,12 +474,12 @@ static void add_window_to_list(Window *p, Window *win)
  * Umask & wlock are set for the user of the display,
  * The display d (if specified) switches to that window.
  */
-int MakeWindow(struct NewWindow *newwin)
+int MakeWindow(struct new_window_t *newwin)
 {
 	Window *p;
 	int i;
 	int f = -1;
-	struct NewWindow nwin;
+	struct new_window_t nwin;
 	int type, startat;
 	char *TtyName;
 	Window *win = first_window;
@@ -512,7 +509,7 @@ int MakeWindow(struct NewWindow *newwin)
 
 	if ((p = calloc(1, sizeof(Window))) == NULL) {
 		if (type == W_TYPE_PTY)
-			ClosePTY(f);
+			scr_close_pty(f);
 		else
 			close(f);
 		Msg(0, "%s", strnomem);
@@ -548,7 +545,7 @@ int MakeWindow(struct NewWindow *newwin)
 	if (NewWindowAcl(p, display ? D_user : users)) {
 		free((char *)p);
 		if (type == W_TYPE_PTY)
-			ClosePTY(f);
+			scr_close_pty(f);
 		else
 			close(f);
 		Msg(0, "%s", strnomem);
@@ -572,7 +569,7 @@ int MakeWindow(struct NewWindow *newwin)
 	p->w_dynamicaka = nwin.dynamicaka;
 	p->w_flow = nwin.flowflag | ((nwin.flowflag & FLOW_AUTOFLAG) ? (FLOW_AUTO | FLOW_ON) : FLOW_AUTO);
 	if (!nwin.aka)
-		nwin.aka = Filename(nwin.args[0]);
+		nwin.aka = scr_filename(nwin.args[0]);
 	strncpy(p->w_akabuf, nwin.aka, ARRAY_SIZE(p->w_akabuf) - 1);
 	if ((nwin.aka = strrchr(p->w_akabuf, '|')) != NULL) {
 		p->w_autoaka = 0;
@@ -806,7 +803,7 @@ void CloseDevice(Window *window)
 		/* pty 4 SALE */
 		(void)chmod(window->w_tty, 0666);
 		(void)chown(window->w_tty, 0, 0);
-		ClosePTY(window->w_ptyfd);
+		scr_close_pty(window->w_ptyfd);
 		break;
 	case W_TYPE_PLAIN:
 		CloseTTY(window->w_ptyfd);
@@ -934,7 +931,7 @@ int OpenDevice(char **args, int lflag, int *typep, char **namep)
 		*namep = arg;
 	} else {
 		*typep = W_TYPE_PTY;
-		fd = OpenPTY(namep);
+		fd = scr_open_pty(namep);
 		if (fd == -1) {
 			Msg(0, "No more PTYs.");
 			return -1;
@@ -944,7 +941,7 @@ int OpenDevice(char **args, int lflag, int *typep, char **namep)
 			int flag = 1;
 			if (ioctl(fd, TIOCPKT, (char *)&flag)) {
 				Msg(errno, "TIOCPKT ioctl");
-				ClosePTY(fd);
+				scr_close_pty(fd);
 				return -1;
 			}
 		}
@@ -982,7 +979,7 @@ int OpenDevice(char **args, int lflag, int *typep, char **namep)
 	{
 		Msg(errno, "chown tty");
 		if (*typep == W_TYPE_PTY)
-			ClosePTY(fd);
+			scr_close_pty(fd);
 		else
 			close(fd);
 		return -1;
@@ -995,7 +992,7 @@ int OpenDevice(char **args, int lflag, int *typep, char **namep)
 	{
 		Msg(errno, "chmod tty");
 		if (*typep == W_TYPE_PTY)
-			ClosePTY(fd);
+			scr_close_pty(fd);
 		else
 			close(fd);
 		return -1;
@@ -1372,7 +1369,7 @@ void FreePseudowin(Window *w)
 	(void)chown(pwin->p_tty, 0, 0);
 	if (pwin->p_ptyfd >= 0) {
 		if (w->w_type == W_TYPE_PTY)
-			ClosePTY(pwin->p_ptyfd);
+			scr_close_pty(pwin->p_ptyfd);
 		else
 			close(pwin->p_ptyfd);
 	}

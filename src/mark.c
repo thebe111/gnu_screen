@@ -27,31 +27,20 @@
  */
 
 #include "config.h"
-
 #include "mark.h"
-
 #include <sys/types.h>
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdbool.h>
-
 #include "screen.h"
-
 #include "encoding.h"
 #include "fileio.h"
 #include "process.h"
 #include "search.h"
 #include "winmsg.h"
 
-/*
- * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
- *
- * WARNING: these routines use the global variables "fore" and
- * "flayer" to make things easier.
- *
- * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
- */
+// WARN: these routines use the global variables "fore" and "flayer" to make things easier
 
 static int is_letter(int);
 static void nextword(int *, int *, int, int);
@@ -80,49 +69,62 @@ const struct LayFuncs MarkLf = {
 	NULL
 };
 
-unsigned char mark_key_tab[256];	/* this array must be initialised first! */
+// NOTE: this array must be initialised first
+unsigned char mark_key_tab[256];
 
-static struct markdata *markdata;
+static struct markdata_s* markdata;
 
-/*
- * VI like is_letter: 0 - whitespace
- *                    1 - letter
- *		      2 - other
- */
-static int is_letter(int c)
-{
-	if (isalnum(c) ||
-	    c == '_' || c == '.' || c == '@' || c == ':' || c == '%' || c == '!' || c == '-' || c == '+')
-		/* thus we can catch email-addresses as a word :-) */
-		return 1;
-	else if (c != ' ')
-		return 2;
-	return 0;
+// FIXME: move to mark.h
+// vi like
+typedef enum char_type_e {
+    WHITESPACE = 0,
+    LETTER,
+    OTHER,
+} char_type_t;
+
+static int 
+is_letter(int c) {
+	if (isalnum(c) || c == '_' || c == '.' || c == '@' || c == ':' || c == '%' || c == '!' || c == '-' || c == '+') {
+		return LETTER;
+    } else if (c != ' ') {
+		return OTHER;
+    }
+
+	return WHITESPACE;
 }
 
-static int linestart(int y)
-{
+static int 
+linestart(int y) {
 	int x;
 	uint32_t *i;
 
-	for (x = markdata->left_mar, i = WIN(y)->image + x; x < fore->w_width - 1; x++)
-		if (*i++ != ' ')
+	for (x = markdata->left_mar, i = WIN(y)->image + x; x < fore->w_width - 1; x++) {
+		if (*i++ != ' ') {
 			break;
-	if (x == fore->w_width - 1)
+        }
+    }
+
+	if (x == fore->w_width - 1) {
 		x = markdata->left_mar;
+    }
+
 	return x;
 }
 
-static int lineend(int y)
-{
+static int lineend(int y) {
 	int x;
 	uint32_t *i;
 
-	for (x = markdata->right_mar, i = WIN(y)->image + x; x >= 0; x--)
-		if (*i-- != ' ')
+	for (x = markdata->right_mar, i = WIN(y)->image + x; x >= 0; x--) {
+		if (*i-- != ' ') {
 			break;
-	if (x < 0)
+        }
+    }
+
+	if (x < 0) {
 		x = markdata->left_mar;
+    }
+
 	return x;
 }
 

@@ -43,7 +43,7 @@
 #include "list_generic.h"
 #include "process.h"
 
-char version[60];		/* initialised by main() */
+char version[60]; // initialised by main()
 
 static void PadStr(char *, int, int, int);
 

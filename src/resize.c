@@ -26,22 +26,19 @@
  ****************************************************************
  */
 
-#include "config.h"
-
-#include "resize.h"
 
 #include <sys/types.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/ioctl.h>
+#include "include/config.h"
+#include "include/resize.h"
+#include "include/screen.h"
+#include "include/process.h"
+#include "include/telnet.h"
 
-#include "screen.h"
-
-#include "process.h"
-#include "telnet.h"
-
-/* maximum window width */
+// maximum window width
 #define MAXWIDTH 1000
 
 static void CheckMaxSize(int);

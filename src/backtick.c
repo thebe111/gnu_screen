@@ -31,104 +31,127 @@
  ****************************************************************
  */
 
-#include "backtick.h"
-
-#include "fileio.h"
-#include "misc.h"
-#include "winmsg.h"
+#include "include/backtick.h"
+#include "include/fileio.h"
+#include "include/misc.h"
+#include "include/winmsg.h"
 
 /* TODO: get rid of global var */
-static Backtick *backticks;
+backtick_t* backticks;
 
-static void backtick_filter(struct backtick *bt)
-{
+static void 
+backtick_filter(backtick_t* bt) {
 	char *p, *q;
 	int c;
 
-	for (p = q = bt->result; (c = (unsigned char)*p++) != 0;) {
+	for (p = q = bt->result; (c = (unsigned char) *p++) != 0;) {
 		if (c == '\t')
 			c = ' ';
+
 		if (c >= ' ' || c == '\005')
 			*q++ = c;
 	}
+
 	*q = 0;
 }
 
-static void backtick_fn(Event *ev, void *data)
-{
-	struct backtick *bt;
+static void 
+backtick_fn(event_t* event, void* data) {
 	int i, j, k, l;
+	backtick_t* bt = (backtick_t*) data;
 
-	bt = (struct backtick *)data;
 	i = bt->bufi;
-	l = read(ev->fd, bt->buf + i, MAXSTR - i);
+	l = read(event->fd, bt->buf + i, MAXSTR - i);
+
 	if (l <= 0) {
-		evdeq(ev);
-		close(ev->fd);
-		ev->fd = -1;
+		evdeq(event);
+		close(event->fd);
+		event->fd = -1;
 		return;
 	}
+
 	i += l;
-	for (j = 0; j < l; j++)
+
+	for (j = 0; j < l; j++) {
 		if (bt->buf[i - j - 1] == '\n')
 			break;
+    }
+
 	if (j < l) {
-		for (k = i - j - 2; k >= 0; k--)
+		for (k = i - j - 2; k >= 0; k--) {
 			if (bt->buf[k] == '\n')
 				break;
+        }
+
 		k++;
 		memmove(bt->result, bt->buf + k, i - j - k);
 		bt->result[i - j - k - 1] = 0;
 		backtick_filter(bt);
-		WindowChanged(NULL, WINESC_BACKTICK);
+		window_changed(NULL, WINESC_BACKTICK);
 	}
+
 	if (j == l && i == MAXSTR) {
 		j = MAXSTR / 2;
 		l = j + 1;
 	}
+
 	if (j < l) {
 		if (j)
 			memmove(bt->buf, bt->buf + i - j, j);
+
 		i = j;
 	}
+
 	bt->bufi = i;
 }
 
-void setbacktick(int num, int lifespan, int tick, char **cmdv)
-{
+void 
+setbacktick(int num, int lifespan, int tick, char** cmdv) {
 	struct backtick **btp, *bt;
-	char **v;
+	char** v;
 
-	for (btp = &backticks; (bt = *btp) != NULL; btp = &bt->next)
+	for (btp = &backticks; (bt = *btp) != NULL; btp = &bt->next) {
 		if (bt->num == num)
 			break;
+    }
+
 	if (!bt && !cmdv)
 		return;
+
 	if (bt) {
 		for (v = bt->cmdv; *v; v++)
 			free(*v);
+
 		free(bt->cmdv);
+
 		if (bt->buf)
 			free(bt->buf);
-		if (bt->ev.fd >= 0)
-			close(bt->ev.fd);
-		evdeq(&bt->ev);
+
+		if (bt->event.fd >= 0)
+			close(bt->event.fd);
+
+		evdeq(&bt->event);
 	}
+
 	if (bt && !cmdv) {
 		*btp = bt->next;
 		free(bt);
 		return;
 	}
+
 	if (!bt) {
-		bt = malloc(sizeof(struct backtick));
+		bt = malloc(sizeof(backtick_t));
+
 		if (!bt) {
 			Msg(0, "%s", strnomem);
 			return;
 		}
-		memset(bt, 0, sizeof(struct backtick));
+
+		memset(bt, 0, sizeof(backtick_t));
 		bt->next = NULL;
 		*btp = bt;
 	}
+
 	bt->num = num;
 	bt->tick = tick;
 	bt->lifespan = lifespan;
@@ -137,69 +160,82 @@ void setbacktick(int num, int lifespan, int tick, char **cmdv)
 	bt->buf = NULL;
 	bt->bufi = 0;
 	bt->cmdv = cmdv;
-	bt->ev.fd = -1;
+	bt->event.fd = -1;
+
 	if (bt->tick == 0 && bt->lifespan == 0) {
 		bt->buf = malloc(MAXSTR);
+
 		if (bt->buf == NULL) {
 			Msg(0, "%s", strnomem);
 			setbacktick(num, 0, 0, NULL);
 			return;
 		}
-		bt->ev.type = EV_READ;
-		bt->ev.fd = readpipe(bt->cmdv);
-		bt->ev.handler = backtick_fn;
-		bt->ev.data = (char *)bt;
-		if (bt->ev.fd >= 0)
-			evenq(&bt->ev);
+
+		bt->event.type = EVENT_READ;
+		bt->event.fd = readpipe(bt->cmdv);
+		bt->event.handler = backtick_fn;
+		bt->event.data = (char*) bt;
+
+		if (bt->event.fd >= 0)
+			evenq(&bt->event);
 	}
 }
 
-char *runbacktick(Backtick *bt, int *tickp, time_t now)
-{
+char* 
+runbacktick(backtick_t* bt, int* tick, time_t now) {
 	int f, i, l, j;
 	time_t now2;
 
 	if (bt->tick && (!*tickp || bt->tick < *tickp))
 		*tickp = bt->tick;
-	if ((bt->lifespan == 0 && bt->tick == 0) || now < bt->bestbefore) {
+
+	if ((bt->lifespan == 0 && bt->tick == 0) || now < bt->bestbefore)
 		return bt->result;
-	}
+
 	f = readpipe(bt->cmdv);
+
 	if (f == -1)
 		return bt->result;
+
 	i = 0;
+
 	while ((l = read(f, bt->result + i, ARRAY_SIZE(bt->result) - i)) > 0) {
 		i += l;
-		for (j = 1; j < l; j++)
+
+		for (j = 1; j < l; j++) {
 			if (bt->result[i - j - 1] == '\n')
 				break;
+        }
+
 		if (j == l && i == ARRAY_SIZE(bt->result)) {
 			j = ARRAY_SIZE(bt->result) / 2;
 			l = j + 1;
 		}
+
 		if (j < l) {
 			memmove(bt->result, bt->result + i - j, j);
 			i = j;
 		}
 	}
+
 	close(f);
 	bt->result[ARRAY_SIZE(bt->result) - 1] = '\n';
+
 	if (i && bt->result[i - 1] == '\n')
 		i--;
+
 	bt->result[i] = 0;
 	backtick_filter(bt);
-	(void)time(&now2);
+	(void) time(&now2);
 	bt->bestbefore = now2 + bt->lifespan;
+
 	return bt->result;
 }
 
-/* Locate a backtick by its id (number); returns NULL if no such backtick
- * exists. */
-Backtick *bt_find_id(int num)
-{
-	Backtick *bt;
-
-	for (bt = backticks; bt; bt = bt->next) {
+// locate a backtick by its id (number); returns NULL if no such backtick exists
+backtick_t* 
+backtick_find_byid(int num) {
+	for (backtick_t* bt = backticks; bt; bt = bt->next) {
 		if (bt->num == num)
 			return bt;
 	}

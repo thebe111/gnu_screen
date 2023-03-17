@@ -26,215 +26,232 @@
  ****************************************************************
  */
 
-#include "config.h"
-
-#include "misc.h"
-
 #include <poll.h>
 #include <sys/types.h>
-#include <sys/stat.h>		/* mkdir() declaration */
+#include <sys/stat.h>
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
+#include "include/config.h"
+#include "include/misc.h"
+#include "include/screen.h"
 
-#include "screen.h"
+char* 
+filename(char* s) {
+    char* p = s;
 
-char *SaveStr(const char *str)
-{
-	char *cp = strdup(str);
+    if (p) {
+        while (*p) {
+            if (*p++ == '/')
+                s = p;
+        }
+    }
 
-	if (cp == NULL)
-		Panic(0, "%s", strnomem);
-
-	return cp;
+    return s;
 }
 
-char *SaveStrn(const char *str, size_t n)
-{
-	char *cp = strndup(str, n + 1);
+char*
+savestr(const char* s) {
+    char* cp = strdup(s);
 
-	if (cp == NULL)
-		Panic(0, "%s", strnomem);
+    if (cp == NULL)
+        Panic(0, "%s", strnomem);
 
-	return cp;
+    return cp;
 }
 
-void centerline(char *str, int y)
-{
-	int l, n;
+char*
+savestrn(const char* s, size_t size) {
+    char* cp = strndup(s, size + 1);
 
-	n = strlen(str);
-	if (n > flayer->l_width - 1)
-		n = flayer->l_width - 1;
-	l = (flayer->l_width - 1 - n) / 2;
-	LPutStr(flayer, str, n, &mchar_blank, l, y);
+    if (cp == NULL)
+        Panic(0, "%s", strnomem);
+
+    return cp;
 }
 
-void leftline(char *str, int y, struct mchar *rend)
-{
-	int l, n;
-	struct mchar mchar_dol;
+char* 
+stripdev(char* name) {
+    if (name == NULL)
+        return NULL;
 
-	mchar_dol = mchar_blank;
-	mchar_dol.image = '$';
+    if (strncmp(name, "/dev/", 5) == 0)
+        return name + 5;
 
-	l = n = strlen(str);
-	if (n > flayer->l_width - 1)
-		n = flayer->l_width - 1;
-	LPutStr(flayer, str, n, rend ? rend : &mchar_blank, 0, y);
-	if (n != l)
-		LPutChar(flayer, &mchar_dol, n, y);
+    return name;
 }
 
-char *Filename(char *s)
-{
-	char *p = s;
+void 
+close_allfiles(int except) {
+    struct pollfd pfd[1024];
+    int max_fd, i, fd, ret, z;
 
-	if (p)
-		while (*p)
-			if (*p++ == '/')
-				s = p;
-	return s;
+    i = 3; // skip stdin, stdout and stderr
+    max_fd = getdtablesize();
+
+    while (i < max_fd) {
+        memset(pfd, 0, sizeof(pfd));
+        z = 0;
+
+        for (fd = i; fd < max_fd && fd < i + 1024; fd++)
+            pfd[z++].fd = fd;
+
+        ret = poll(pfd, fd - i, 0);
+
+        if (ret < 0)
+            Panic(errno, "poll");
+
+        z = 0;
+
+        for (fd = i; fd < max_fd && fd < i + 1024; fd++) {
+            if (!(pfd[z++].revents & POLLNVAL) && fd != except)
+                close(fd);
+        }
+
+        i = fd;
+    }
 }
 
-char *stripdev(char *name)
-{
-	if (name == NULL)
-		return NULL;
-	if (strncmp(name, "/dev/", 5) == 0)
-		return name + 5;
-	return name;
+void 
+centerline(char* str, int y) {
+    int x, len;
+
+    len = strlen(str);
+
+    if (len > flayer->l_width - 1)
+        len = flayer->l_width - 1;
+
+    x = (flayer->l_width - 1 - len) / 2;
+
+    LPutStr(flayer, str, len, &mchar_blank, x, y);
 }
 
-/*
- *    Signal handling
- */
+void 
+leftline(char* s, int y, struct mchar* render) {
+    int l, len;
+    struct mchar mchar_dol;
 
-void (*xsignal(int sig, void (*func) (int))) (int) {
-	struct sigaction osa, sa;
-	sa.sa_handler = func;
-	(void)sigemptyset(&sa.sa_mask);
+    mchar_dol = mchar_blank;
+    mchar_dol.image = '$';
+
+    l = len = strlen(s);
+
+    if (len > flayer->l_width - 1)
+        len = flayer->l_width - 1;
+
+    LPutStr(flayer, s, len, render ? render : &mchar_blank, 0, y);
+
+    if (len != l)
+        LPutChar(flayer, &mchar_dol, len, y);
+}
+
+// -------
+// signal handling
+// -------
+void 
+(*xsignal(int sig, void (*cb)(int))) (int) {
+    struct sigaction osa, sa;
+
+    sa.sa_handler = cb;
+
+    (void) sigemptyset(&sa.sa_mask);
+
 #ifdef SA_RESTART
-	sa.sa_flags = (sig == SIGCHLD ? SA_RESTART : 0);
+    sa.sa_flags = (sig == SIGCHLD ? SA_RESTART : 0);
 #else
-	sa.sa_flags = 0;
+    sa.sa_flags = 0;
 #endif
-	if (sigaction(sig, &sa, &osa))
-		return (void (*)(int))-1;
-	return osa.sa_handler;
+
+    if (sigaction(sig, &sa, &osa))
+        return (void (*)(int)) -1;
+
+    return osa.sa_handler;
 }
 
-/*
- *    uid/gid handling
- */
+// -------
+// uid/gid handling
+// -------
+void 
+xseteuid(int euid) {
+    if (seteuid(euid) == 0)
+        return;
 
-void xseteuid(int euid)
-{
-	if (seteuid(euid) == 0)
-		return;
-	if (seteuid(0) || seteuid(euid))
-		Panic(errno, "seteuid");
+    if (seteuid(0) || seteuid(euid))
+        Panic(errno, "seteuid");
 }
 
-void xsetegid(int egid)
-{
-	if (setegid(egid))
-		Panic(errno, "setegid");
+void 
+xsetegid(int egid) {
+    if (setegid(egid))
+        Panic(errno, "setegid");
 }
 
-void Kill(pid_t pid, int sig)
-{
-	if (pid < 2)
-		return;
-	(void)kill(pid, sig);
+// -------
+// security: switch to real uid
+// -------
+static int user_stat;
+
+int 
+add_xchar(char* buf, int ch) {
+    char* p = buf;
+
+    if (ch < ' ' || ch == /* DEL */ 0x7f) {
+        *p++ = '^';
+        // if (ch == DEL) ?
+        // if (ch < ' ') rollback on ascii table
+        *p++ = ch ^ 0x40;
+    } else if (ch >= 0x80) {
+        *p++ = '\\';
+        *p++ = (ch >> 6 & 7) + '0';
+        *p++ = (ch >> 3 & 7) + '0';
+        *p++ = (ch >> 0 & 7) + '0';
+    } else
+        *p++ = ch;
+
+    return p - buf;
 }
 
-void closeallfiles(int except)
-{
-	struct pollfd pfd[1024];
-	int maxfd, i, fd, ret, z;
+int 
+add_xchars(char* buf, int len, char* s) {
+    char *p;
 
-	i = 3; /* skip stdin, stdout and stderr */
-	maxfd = getdtablesize();
+    if (s == NULL) {
+        *buf = 0;
 
-	while (i < maxfd) {
-		memset(pfd, 0, sizeof(pfd));
+        return 0;
+    }
 
-		z = 0;
-		for (fd = i; fd < maxfd && fd < i + 1024; fd++)
-			pfd[z++].fd = fd;
+    len -= 4; // longest sequence produced by scr_add_xchar()
 
-		ret = poll(pfd, fd - i, 0);
-		if (ret < 0)
-			Panic(errno, "poll");
+    for (p = buf; p < buf + len && *s; s++) {
+        if (*s == ' ')
+            *p++ = *s;
+        else
+            p += add_xchar(p, *s);
+    }
 
-		z = 0;
-		for (fd = i; fd < maxfd && fd < i + 1024; fd++)
-			if (!(pfd[z++].revents & POLLNVAL) && fd != except)
-				close(fd);
+    *p = 0;
 
-		i = fd;
-	}
+    return p - buf;
 }
 
-/*
- *  Security - switch to real uid
- */
+int 
+user_context(void) {
+    xseteuid(real_uid);
+    xsetegid(real_gid);
 
-static int UserSTAT;
-
-int UserContext(void)
-{
-	xseteuid(real_uid);
-	xsetegid(real_gid);
-	return 1;
+    return 1;
 }
 
-void UserReturn(int val)
-{
-	xseteuid(eff_uid);
-	xsetegid(eff_gid);
-	UserSTAT = val;
+int 
+user_status(void) {
+    return user_stat;
 }
 
-int UserStatus(void)
-{
-	return UserSTAT;
-}
-
-int AddXChar(char *buf, int ch)
-{
-	char *p = buf;
-
-	if (ch < ' ' || ch == 0x7f) {
-		*p++ = '^';
-		*p++ = ch ^ 0x40;
-	} else if (ch >= 0x80) {
-		*p++ = '\\';
-		*p++ = (ch >> 6 & 7) + '0';
-		*p++ = (ch >> 3 & 7) + '0';
-		*p++ = (ch >> 0 & 7) + '0';
-	} else
-		*p++ = ch;
-	return p - buf;
-}
-
-int AddXChars(char *buf, int len, char *str)
-{
-	char *p;
-
-	if (str == NULL) {
-		*buf = 0;
-		return 0;
-	}
-	len -= 4;		/* longest sequence produced by AddXChar() */
-	for (p = buf; p < buf + len && *str; str++) {
-		if (*str == ' ')
-			*p++ = *str;
-		else
-			p += AddXChar(p, *str);
-	}
-	*p = 0;
-	return p - buf;
+void 
+user_return(int val) {
+    xseteuid(eff_uid);
+    xsetegid(eff_gid);
+    user_stat = val;
 }

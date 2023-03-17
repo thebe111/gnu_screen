@@ -26,51 +26,52 @@
  ****************************************************************
  */
 
-#include "config.h"
-
-#include "pty.h"
-
 #include <sys/ioctl.h>
+#include "include/config.h"
+#include "include/pty.h"
+#include "include/screen.h"
 
-#include "screen.h"
-
+// FIXME: HAVE_PTY_H
 #if defined(HAVE_PTY_H)
-# include <pty.h>
+#include <pty.h>
 #endif
+
 #if defined(HAVE_UTIL_H)
-# include <util.h>
+#include <util.h>
 #endif
+
 #if defined(HAVE_LIBUTIL_H)
-# include <libutil.h>
+#include <libutil.h>
 #endif
 
 int pty_preopen = 0;
 
-/***************************************************************/
+int 
+open_pty(char** ttyn) {
+	static char ttyname[32];
+	int amaster, aslave;
 
-int OpenPTY(char **ttyn)
-{
-	static char TtyName[32];
-	int f, s;
-
-	if (openpty(&f, &s, TtyName, NULL, NULL) != 0)
+	if (openpty(&amaster, &aslave, ttyname, NULL, NULL) != 0)
 		return -1;
-	close(s);
 
-	tcflush(f, TCIOFLUSH);
+	close(aslave);
+
+	tcflush(amaster, TCIOFLUSH);
+
 #if defined(LOCKPTY) && defined(TIOCEXCL) && defined(TIOCNXCL)
-	(void)ioctl(f, TIOCEXCL, NULL);
+	(void) ioctl(amaster, TIOCEXCL, NULL);
 #endif
 
 	pty_preopen = 1;
-	*ttyn = TtyName;
-	return f;
+	*ttyn = ttyname;
+
+	return amaster;
 }
 
-int ClosePTY(int fd)
-{
+int 
+close_pty(int fd) {
 #if defined(LOCKPTY) && defined(TIOCEXCL) && defined(TIOCNXCL)
-	(void)ioctl(fd, TIOCNXCL, NULL);
+	(void) ioctl(fd, TIOCNXCL, NULL);
 #endif
 
 	return close(fd);

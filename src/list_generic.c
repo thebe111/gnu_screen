@@ -20,13 +20,10 @@
  ****************************************************************
  */
 
-#include "config.h"
-
-#include "list_generic.h"
-
 #include <stdbool.h>
 #include <stdint.h>
-
+#include "config.h"
+#include "list_generic.h"
 #include "misc.h"
 #include "input.h"
 
@@ -435,7 +432,7 @@ void glist_display_all(ListData *list)
 	LaySetCursor();
 }
 
-void glist_abort(void)
-{
+void 
+glist_abort(void) {
 	ListAbort();
 }

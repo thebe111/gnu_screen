@@ -1,42 +1,38 @@
-/* Copyright (c) 2013
- *      Mike Gerwitz (mtg@gnu.org)
- * Copyright (c) 2010
- *      Juergen Weigert (jnweiger@immd4.informatik.uni-erlangen.de)
- *      Sadrul Habib Chowdhury (sadrul@users.sourceforge.net)
- * Copyright (c) 2008, 2009
- *      Juergen Weigert (jnweiger@immd4.informatik.uni-erlangen.de)
- *      Michael Schroeder (mlschroe@immd4.informatik.uni-erlangen.de)
- *      Micah Cowan (micah@cowan.name)
- *      Sadrul Habib Chowdhury (sadrul@users.sourceforge.net)
- * Copyright (c) 1993-2002, 2003, 2005, 2006, 2007
- *      Juergen Weigert (jnweiger@immd4.informatik.uni-erlangen.de)
- *      Michael Schroeder (mlschroe@immd4.informatik.uni-erlangen.de)
- * Copyright (c) 1987 Oliver Laumann
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 3, or (at your option)
- * any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program (see the file COPYING); if not, see
- * https://www.gnu.org/licenses/, or contact Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA  02111-1301  USA
- *
- ****************************************************************
- */
+// Copyright (c) 2013
+//      Mike Gerwitz <mtg@gnu.org>
+// Copyright (c) 2010
+//      Juergen Weigert <jnweiger@immd4.informatik.uni-erlangen.de>
+//      Sadrul Habib Chowdhury <sadrul@users.sourceforge.net>
+// Copyright (c) 2008, 2009
+//      Juergen Weigert <jnweiger@immd4.informatik.uni-erlangen.de>
+//      Michael Schroeder <mlschroe@immd4.informatik.uni-erlangen.de>
+//      Micah Cowan <micah@cowan.name>
+//      Sadrul Habib Chowdhury <sadrul@users.sourceforge.net>
+// Copyright (c) 1993-2002, 2003, 2005, 2006, 2007
+//      Juergen Weigert <jnweiger@immd4.informatik.uni-erlangen.de>
+//      Michael Schroeder <mlschroe@immd4.informatik.uni-erlangen.de>
+// Copyright (c) 1987 Oliver Laumann
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 3, or (at your option)
+// any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program (see the file COPYING); if not, see [0], 
+// or contact Free Software Foundation, Inc.,
+// 51 Franklin Street, Fifth Floor, Boston, MA  02111-1301  USA
+//
+// [0]: <https://www.gnu.org/licenses/>
 
 #include "config.h"
-
 #include "winmsg.h"
-
 #include "screen.h"
-
 #include "fileio.h"
 #include "help.h"
 #include "logfile.h"
@@ -44,21 +40,15 @@
 #include "process.h"
 #include "sched.h"
 
-/* TODO: rid global variable (has been renamed to point this out; see commit
- * history) */
-WinMsgBuf *g_winmsg;
-
 #define CHRPAD 127
-
-/* maximum limit on MakeWinMsgEv recursion */
+// maximum limit on MakeWinMsgEv recursion
 #define WINMSG_RECLIMIT 10
-
-/* escape char for backtick output */
+// escape char for backtick output
 #define WINMSG_BT_ESC '\005'
 
-/* redundant definition abstraction for escape character handlers; note that
- * a variable varadic macro name is a gcc extension and is not portable, so
- * we instead use two separate macros */
+// redundant definition abstraction for escape character handlers; note that
+// a variable varadic macro name is a gcc extension and is not portable, so
+// we instead use two separate macros 
 #define WINMSG_ESC_PARAMS \
 	__attribute__((unused)) WinMsgEsc *esc, \
 	__attribute__((unused)) char **src, \
@@ -72,47 +62,66 @@ WinMsgBuf *g_winmsg;
 #define WinMsgDoEsc(name) winmsg_esc__name(name)(WINMSG_ESC_ARGS)
 #define WinMsgDoEscEx(name, ...) winmsg_esc__name(name)(WINMSG_ESC_ARGS, __VA_ARGS__)
 
-static void _MakeWinMsgEvRec(WinMsgBufContext *, WinMsgCond *, char *, Window *, int *, int);
+/* TODO: rid global variable (has been renamed to point this out; see commit
+ * history) */
+win_msg_buf_t* g_winmsg;
+
+static void 
+_MakeWinMsgEvRec(win_msg_buf_context_t* ctx, WinMsgCond *, char *, Window * win, int *, int);
 
 
 /* TODO: remove the redundant arguments */
-static char *pad_expand(WinMsgBuf *winmsg, char *buf, char *p, int numpad, int padlen)
-{
+static char* 
+pad_expand(win_msg_buf_t* winmsg, char *buf, char *p, int numpad, int padlen) {
 	char *pn, *pn2;
-	int i, r;
+	int i, nrender;
 
-	padlen = padlen - (p - buf);	/* space for rent */
+    // space for rent == render ???
+	padlen = padlen - (p - buf);
+
 	if (padlen < 0)
 		padlen = 0;
+
 	pn2 = pn = p + padlen;
-	r = winmsg->numrend;
+	nrender = winmsg->numrend;
+
 	while (p >= buf) {
-		if (r && *p != CHRPAD && p - buf == winmsg->rendpos[r - 1]) {
-			winmsg->rendpos[--r] = pn - buf;
+		if (nrender && *p != CHRPAD && p - buf == winmsg->rendpos[nrender - 1]) {
+			winmsg->rendpos[--nrender] = pn - buf;
 			continue;
 		}
+
 		*pn-- = *p;
+
 		if (*p-- == CHRPAD) {
 			pn[1] = ' ';
 			i = numpad > 0 ? (padlen + numpad - 1) / numpad : 0;
 			padlen -= i;
-			while (i-- > 0)
+
+			while (i-- > 0) {
 				*pn-- = ' ';
+            }
+
 			numpad--;
-			if (r && p - buf == winmsg->rendpos[r - 1])
-				winmsg->rendpos[--r] = pn - buf;
+
+			if (nrender && p - buf == winmsg->rendpos[nrender - 1]) {
+				winmsg->rendpos[--nrender] = pn - buf;
+            }
 		}
 	}
+
 	return pn2;
 }
 
-int AddWinMsgRend(WinMsgBuf *winmsg, const char *str, uint64_t r)
-{
-	if (winmsg->numrend >= MAX_WINMSG_REND || str < winmsg->buf || str >= winmsg->buf + MAXSTR)
-		return -1;
+int 
+AddWinMsgRend(win_msg_buf_t* winmsg, const char* str, uint64_t nrender) {
+	if (winmsg->numrend >= MAX_WINMSG_REND || str < winmsg->buf || str >= winmsg->buf + MAXSTR) {
+		return -EXIT_FAILURE;
+    }
 
-	wmb_rendadd(winmsg, r, str - winmsg->buf);
-	return 0;
+	wmb_rendadd(winmsg, nrender, str - winmsg->buf);
+
+	return EXIT_SUCCESS;
 }
 
 
@@ -139,7 +148,7 @@ winmsg_esc_ex(Backtick, int id, Window *win, int *tick, struct timeval *now, int
 	Backtick *bt;
 	char *btresult;
 
-	if (!(bt = bt_find_id(id)))
+	if (!(bt = backtick_find_byid(id)))
 		return;
 
 	/* TODO: not re-entrant; static buffer returned */

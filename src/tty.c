@@ -26,9 +26,6 @@
  ****************************************************************
  */
 
-#include "config.h"
-
-#include "tty.h"
 
 #include <sys/types.h>
 #include <signal.h>
@@ -40,13 +37,14 @@
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-
-#include "screen.h"
-#include "fileio.h"
-#include "misc.h"
-#include "pty.h"
-#include "telnet.h"
-#include "tty.h"
+#include "include/config.h"
+#include "include/tty.h"
+#include "include/screen.h"
+#include "include/fileio.h"
+#include "include/misc.h"
+#include "include/pty.h"
+#include "include/telnet.h"
+#include "include/tty.h"
 
 static void consredir_readev_fn(Event *, void *);
 static struct baud_values *lookup_baud (int);
@@ -855,7 +853,7 @@ int TtyGrabConsole(int fd, bool on, char *rc_name)
 	close(cfd);
 #else
 	/* special linux workaround for a too restrictive kernel */
-	if ((consredirfd[0] = OpenPTY(&slave)) < 0) {
+	if ((consredirfd[0] = scr_open_pty(&slave)) < 0) {
 		Msg(errno, "%s: could not open detach pty master", rc_name);
 		return -1;
 	}

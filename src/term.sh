@@ -10,8 +10,8 @@ fi
 LC_ALL=C
 export LC_ALL
 
-rm -f term.h
-cat << EOF > term.h
+rm -f include/term.h
+cat << EOF > include/term.h
 /*
  * This file is automagically created from term.c -- DO NOT EDIT
  */

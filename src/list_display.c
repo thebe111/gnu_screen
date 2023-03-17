@@ -29,200 +29,222 @@
  ****************************************************************
  */
 
-/* Deals with the list of displays */
-
-#include "config.h"
-
-#include "list_generic.h"
-
 #include <stdbool.h>
 #include <stdint.h>
+#include "include/config.h"
+#include "include/list_generic.h"
+#include "include/misc.h"
+#include "include/screen.h"
+#include "include/acls.h"
 
-#include "screen.h"
+static char listid[] = "display";
 
-#include "misc.h"
+// layout of the displays page is as follows:
+// 
+// xterm 80x42      jnweiger@/dev/ttyp4    0(m11)    &rWx
+// facit 80x24 nb   mlschroe@/dev/ttyhf   11(tcsh)    rwx
+// xterm 80x42      jnhollma@/dev/ttyp5    0(m11)    &R.x
+// 
+//   |     |    |      |         |         |   |     | ¦___ window permissions
+//   |     |    |      |         |         |   |     |      (R. is locked r-only,
+//   |     |    |      |         |         |   |     |       W has wlock)
+//   |     |    |      |         |         |   |     |
+//   |     |    |      |         |         |   |     |___ Window is shared
+//   |     |    |      |         |         |   |
+//   |     |    |      |         |         |   |___ Name/Title of window
+//   |     |    |      |         |         |
+//   |     |    |      |         |         |___ Number of window
+//   |     |    |      |         |
+//   |     |    |      |         |___ Name of the display (the attached device)
+//   |     |    |      |
+//   |     |    |      |___ Username who is logged in at the display
+//   |     |    |
+//   |     |    |___ Display is in nonblocking mode. Shows 'NB' if obuf is full.
+//   |     |
+//   |     |___ Displays geometry as width x height.
+//   |
+//   |___ the terminal type known by screen for this display.
 
-static char ListID[] = "display";
+static int 
+gl_display_header(list_data_t* ldata) {
+    UNUSED(ldata);
 
-/*
- * layout of the displays page is as follows:
+    leftline("term-type   size         user interface           window       perms", 0, NULL);
+    leftline("---------- ------- ---------- ----------------- ----------     -----", 1, NULL);
 
-xterm 80x42      jnweiger@/dev/ttyp4    0(m11)    &rWx
-facit 80x24 nb   mlschroe@/dev/ttyhf   11(tcsh)    rwx
-xterm 80x42      jnhollma@/dev/ttyp5    0(m11)    &R.x
-
-  |     |    |      |         |         |   |     | ¦___ window permissions
-  |     |    |      |         |         |   |     |      (R. is locked r-only,
-  |     |    |      |         |         |   |     |       W has wlock)
-  |     |    |      |         |         |   |     |___ Window is shared
-  |     |    |      |         |         |   |___ Name/Title of window
-  |     |    |      |         |         |___ Number of window
-  |     |    |      |         |___ Name of the display (the attached device)
-  |     |    |      |___ Username who is logged in at the display
-  |     |    |___ Display is in nonblocking mode. Shows 'NB' if obuf is full.
-  |     |___ Displays geometry as width x height.
-  |___ the terminal type known by screen for this display.
-
- */
-
-static int gl_Display_header(ListData *ldata)
-{
-	(void)ldata; /* unused */
-
-	leftline("term-type   size         user interface           window       Perms", 0, NULL);
-	leftline("---------- ------- ---------- ----------------- ----------     -----", 1, NULL);
-	return 2;
+    return 2;
 }
 
-static int gl_Display_footer(ListData *ldata)
-{
-	(void)ldata; /* unused */
+static int 
+gl_display_footer(list_data_t* ldata) {
+    UNUSED(ldata);
 
-	centerline("[Press ctrl-l to refresh; Return to end.]", flayer->l_height - 1);
-	return 1;
+    centerline("[Press ctrl-l to refresh; Return to end.]", flayer->l_height - 1);
+
+    return 1;
 }
 
-static int gl_Display_row(ListData *ldata, ListRow *lrow)
-{
-	Display *d = lrow->data;
-	char tbuf[80];
-	static char *blockstates[5] = { "nb", "NB", "Z<", "Z>", "BL" };
-	Window *w = d->d_fore;
-	struct mchar m_current = mchar_blank;
-	m_current.attr = A_BD;
+static int 
+gl_display_row(list_data_t* ldata, list_row_t* lrow) {
+    static char* blockstates[5] = { "nb", "NB", "Z<", "Z>", "BL" };
+    char tbuf[80];
 
-	sprintf(tbuf, " %-10.10s%4dx%-4d%10.10s@%-16.16s%s",
-		d->d_termname, d->d_width, d->d_height, d->d_user->u_name,
-		d->d_usertty,
-		(d->d_blocked || d->d_nonblock >= 0) && d->d_blocked <= 4 ? blockstates[d->d_blocked] : "  ");
+    display_t* D = lrow->data;
+    window_t* win = D->d_fore;
 
-	if (w) {
-		int l = 10 - strlen(w->w_title);
-		if (l < 0)
-			l = 0;
-		sprintf(tbuf + strlen(tbuf), "%3d(%.10s)%*s%c%c%c%c", w->w_number, w->w_title, l, "",
-			/* w->w_dlist->next */ 0 ? '&' : ' ',
-			/*
-			 * The rwx triple:
-			 * -,r,R      no read, read, read only due to foreign wlock
-			 * -,.,w,W    no write, write suppressed by foreign wlock,
-			 *            write, own wlock
-			 * -,x        no execute, execute
-			 */
-			(AclCheckPermWin(d->d_user, ACL_READ, w) ? '-' :
-			 ((w->w_wlock == WLOCK_OFF || d->d_user == w->w_wlockuser) ?
-			  'r' : 'R')),
-			(AclCheckPermWin(d->d_user, ACL_READ, w) ? '-' :
-			 ((w->w_wlock == WLOCK_OFF) ? 'w' :
-			  ((d->d_user == w->w_wlockuser) ? 'W' : 'v'))),
-			(AclCheckPermWin(d->d_user, ACL_READ, w) ? '-' : 'x')
-		    );
-	}
-	leftline(tbuf, lrow->y, lrow == ldata->selected ? &mchar_so : d == display ? &m_current : NULL);
+    struct mchar m_current = mchar_blank;
+    m_current.attr = A_BD;
 
-	return 1;
+    sprintf(
+            tbuf, 
+            " %-10.10s%4dx%-4d%10.10s@%-16.16s%s",
+            D->d_termname, D->d_width, D->d_height, D->d_user->u_name,
+            D->d_usertty,
+            (D->d_blocked || D->d_nonblock >= 0) && D->d_blocked <= 4 ? blockstates[D->d_blocked] : "  "
+            );
+
+    if (win) {
+        int len = 10 - strlen(win->w_title);
+
+        if (len < 0)
+            len = 0;
+
+        char r_nest1 = (win->w_wlock == WLOCK_OFF || D->d_user == win->w_wlockuser) ? 'r' : 'R';
+        char w_nest2 = D->d_user == win->w_wlockuser ? 'W' : 'v';
+        char w_nest1 = (win->w_wlock == WLOCK_OFF) ? 'w' : w_nest2;
+
+        sprintf(
+                tbuf + strlen(tbuf), 
+                "%3d(%.10s)%*s%c%c%c%c",
+                win->w_number,
+                win->w_title,
+                len,
+                "",
+                /* w->w_dlist->next */ 0 ? '&' : ' ',
+                // the rwx triple:
+                // -,r,R      no read, read, read only due to foreign wlock
+                // -,.,w,W    no write, write suppressed by foreign wlock, write, own wlock
+                // -,x        no execute, execute
+                (AclCheckPermWin(D->d_user, ACL_READ, win) ? '-' : r_nest1),
+                (AclCheckPermWin(D->d_user, ACL_READ, win) ? '-' : w_nest1),
+                (AclCheckPermWin(D->d_user, ACL_READ, win) ? '-' : 'x')
+                );
+    }
+
+    leftline(tbuf, lrow->y, lrow == ldata->selected ? &mchar_so : D == display ? &m_current : NULL);
+
+    return 1;
 }
 
-static int gl_Display_rebuild(ListData *ldata)
-{
-	/* recreate the rows */
-	Display *d;
-	ListRow *row = NULL;
+static int 
+gl_display_rebuild(list_data_t* ldata) {
+    // recreate the rows
+    display_t* D;
+    list_row_t *row = NULL;
 
-	if (flayer->l_width < 10 || flayer->l_height < 5)
-		return -1;
+    if (flayer->l_width < 10 || flayer->l_height < 5)
+        return -1;
 
-	for (d = displays; d; d = d->d_next) {
-		row = glist_add_row(ldata, d, row);
-		if (d == display)
-			ldata->selected = row;
-	}
+    for (D = displays; D; D = D->d_next) {
+        row = glist_add_row(ldata, D, row);
 
-	glist_display_all(ldata);
-	return 0;
+        if (D == display)
+            ldata->selected = row;
+    }
+
+    glist_display_all(ldata);
+
+    return 0;
 }
 
-static int gl_Display_input(ListData *ldata, char **inp, size_t *len)
-{
-	Display *cd = display;
-	unsigned char ch;
+static int 
+gl_display_input(list_data_t* ldata, char** inputp, size_t* len) {
+    display_t* curr_D = display;
+    unsigned char ch;
 
-	if (!ldata->selected)
-		return 0;
+    if (!ldata->selected)
+        return 0;
 
-	ch = (unsigned char)**inp;
-	++*inp;
-	--*len;
+    ch = (unsigned char) **inputp;
+    ++*inputp;
+    --*len;
 
-	switch (ch) {
-	case '\f':		/* ^L to refresh */
-		glist_remove_rows(ldata);
-		gl_Display_rebuild(ldata);
-		break;
+    switch (ch) {
+        case '\f': // ^L to refresh
+            glist_remove_rows(ldata);
+            gl_display_rebuild(ldata);
+            break;
+        case '\r':
+        case '\n':
+            glist_abort();
+            *len = 0;
+            break;
+        case 'd': // detach
+        case 'D': // power detach
+            display = ldata->selected->data;
 
-	case '\r':
-	case '\n':
-		glist_abort();
-		*len = 0;
-		break;
+            if (display == curr_D) // we do not allow detaching the current display
+                break;
 
-	case 'd':		/* Detach */
-	case 'D':		/* Power detach */
-		display = ldata->selected->data;
-		if (display == cd)	/* We do not allow detaching the current display */
-			break;
-		Detach(ch == 'D' ? D_REMOTE_POWER : D_REMOTE);
-		display = cd;
-		glist_remove_rows(ldata);
-		gl_Display_rebuild(ldata);
-		break;
+            Detach(ch == 'D' ? D_REMOTE_POWER : D_REMOTE);
 
-	default:
-		/* We didn't actually process the input. */
-		--*inp;
-		++*len;
-		return 0;
-	}
-	return 1;
+            display = curr_D;
+
+            glist_remove_rows(ldata);
+            gl_display_rebuild(ldata);
+            break;
+        default:
+            // we didn't actually process the input.
+            --*inputp;
+            ++*len;
+            return 0;
+    }
+
+    return 1;
 }
 
-static int gl_Display_freerow(ListData *ldata, ListRow *row)
-{
-	(void)ldata; /* unused */
-	(void)row; /* unused */
-	/* There was no allocation when row->data was set. So nothing to do here. */
-	return 0;
+static int 
+gl_display_freerow(list_data_t* ldata, list_row_t* lrow) {
+    UNUSED(ldata);
+    UNUSED(lrow);
+    //
+    // there was no allocation when row->data was set. So nothing to do here.
+    return 0;
 }
 
-static int gl_Display_free(ListData *ldata)
-{
-	(void)ldata; /* unused */
-	/* There was no allocation in ldata->data. So nothing to do here. */
-	return 0;
+static int 
+gl_display_free(list_data_t *ldata) {
+    UNUSED(ldata);
+
+    // there was no allocation in ldata->data. So nothing to do here
+    return 0;
 }
 
-static const GenericList gl_Display = {
-	gl_Display_header,
-	gl_Display_footer,
-	gl_Display_row,
-	gl_Display_input,
-	gl_Display_freerow,
-	gl_Display_free,
-	gl_Display_rebuild,
-	NULL			/* We do not allow searching in the display list, at the moment */
+static const generic_list_t 
+gl_display = {
+    gl_display_free,
+    gl_display_freerow,
+    NULL, // we do not allow searching in the display list, at the moment
+    gl_display_input,
+    gl_display_footer,
+    gl_display_header,
+    gl_display_row,
+    gl_display_rebuild,
 };
 
-void display_displays(void)
-{
-	ListData *ldata;
-	if (flayer->l_width < 10 || flayer->l_height < 5) {
-		LMsg(0, "Window size too small for displays page");
-		return;
-	}
+void 
+display_displays(void) {
+    list_data_t* ldata;
 
-	ldata = glist_display(&gl_Display, ListID);
-	if (!ldata)
-		return;
+    if (flayer->l_width < 10 || flayer->l_height < 5) {
+        LMsg(0, "Window size too small for displays page");
+        return;
+    }
 
-	gl_Display_rebuild(ldata);
+    ldata = glist_display(&gl_display, listid);
+
+    if (!ldata)
+        return;
+
+    gl_display_rebuild(ldata);
 }
